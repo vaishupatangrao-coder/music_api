@@ -9,6 +9,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Audio URL decryption
 function decryptAudioUrl(encryptedString) {
   if (!encryptedString) return null;
 
@@ -36,16 +37,30 @@ function decryptAudioUrl(encryptedString) {
     }
 
     return url;
-  } catch (err) {
-    console.log("Audio URL decryption error:", err.message);
+  } catch (error) {
+    console.log("Audio decryption error:", error.message);
     return null;
   }
 }
 
+// Home route
 app.get("/", (req, res) => {
-  res.send("Music Search API is running!");
+  res.status(200).json({
+    success: true,
+    message: "MelodyX Music Search API is running!",
+  });
 });
 
+// Health check
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    success: true,
+    status: "healthy",
+    message: "Music API is working!",
+  });
+});
+
+// Songs search API
 app.get("/songs", async (req, res) => {
   const search = req.query.search;
 
@@ -58,7 +73,7 @@ app.get("/songs", async (req, res) => {
 
   const query = search.trim();
 
-  // JioSaavn Search
+  // JioSaavn API
   try {
     const saavnRes = await axios.get(
       "https://www.jiosaavn.com/api.php",
@@ -77,7 +92,7 @@ app.get("/songs", async (req, res) => {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
         },
-        timeout: 10000,
+        timeout: 15000,
       }
     );
 
@@ -87,7 +102,8 @@ app.get("/songs", async (req, res) => {
       .map((song) => {
         const fullAudio =
           decryptAudioUrl(song.encrypted_media_url) ||
-          song.media_preview_url;
+          song.media_preview_url ||
+          null;
 
         let image = song.image || "";
 
@@ -104,7 +120,9 @@ app.get("/songs", async (req, res) => {
                 .replace(/&amp;/g, "&")
             : "Unknown",
           artist:
-            song.subtitle || song.primary_artists || "Various Artists",
+            song.subtitle ||
+            song.primary_artists ||
+            "Various Artists",
           album: song.album || "",
           imageUrl: image,
           audioUrl: fullAudio,
@@ -113,20 +131,20 @@ app.get("/songs", async (req, res) => {
       .filter((song) => song.audioUrl);
 
     if (songs.length > 0) {
-      return res.json({
+      return res.status(200).json({
         success: true,
+        source: "JioSaavn",
         total: songs.length,
         data: songs,
       });
     }
+
+    console.log("JioSaavn returned no playable songs.");
   } catch (error) {
-    console.log(
-      "JioSaavn search error, falling back to iTunes:",
-      error.message
-    );
+    console.log("JioSaavn error:", error.message);
   }
 
-  // iTunes Fallback
+  // iTunes fallback
   try {
     const itunesRes = await axios.get(
       "https://itunes.apple.com/search",
@@ -136,39 +154,50 @@ app.get("/songs", async (req, res) => {
           entity: "song",
           limit: 30,
         },
-        timeout: 10000,
+        timeout: 15000,
       }
     );
 
     const fallbackSongs = (itunesRes.data.results || [])
       .map((song) => ({
         id: song.trackId,
-        title: song.trackName,
-        artist: song.artistName,
+        title: song.trackName || "Unknown",
+        artist: song.artistName || "Unknown Artist",
         album: song.collectionName || "",
-        imageUrl: song.artworkUrl100 || "",
+        imageUrl: song.artworkUrl100
+          ? song.artworkUrl100.replace("100x100", "500x500")
+          : "",
         audioUrl: song.previewUrl || null,
       }))
       .filter((song) => song.audioUrl);
 
-    return res.json({
+    return res.status(200).json({
       success: true,
+      source: "iTunes",
       total: fallbackSongs.length,
       data: fallbackSongs,
     });
   } catch (error) {
-    console.log("iTunes search error:", error.message);
+    console.log("iTunes error:", error.message);
 
     return res.status(500).json({
       success: false,
-      message: "Unable to search songs.",
+      message: "Unable to search songs. Please try again.",
     });
   }
 });
 
-// Render PORT Configuration
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Route ${req.method} ${req.originalUrl} not found`,
+  });
+});
+
+// Render PORT configuration
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(`Music API running on port ${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`MelodyX Music API running on port ${PORT}`);
 });
